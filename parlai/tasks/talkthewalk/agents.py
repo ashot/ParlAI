@@ -8,7 +8,7 @@
 from parlai.core.teachers import FbDialogTeacher
 from parlai.core.teachers import FixedDialogTeacher
 from .build import build
-from .worlds import Simulator
+from .worlds import Simulator, is_action
 
 import copy
 import json
@@ -373,12 +373,12 @@ class TTWTeacher(FixedDialogTeacher):
         self.training = self.datatype.startswith('train')
         self.num_epochs = self.opt.get('num_epochs', 0)
         data_path, datafile = _path(opt)
-        self.sim = Simulator(opt)
 
         if shared:
             self.data = shared['data']
             self.sim = shared['sim']
         else:
+            self.sim = Simulator(opt)
             self._setup_data(datafile)
         self.reset()
 
@@ -422,14 +422,18 @@ class TouristTeacher(TTWTeacher):
         for msg in episode['dialog']:
             text = msg['text']
             if msg['id'] == 'Tourist':
-                if self.opt['train_actions'] or not text.startswith('ACTION'):
+                if self.opt['train_actions'] or not is_action(text):
                     example['labels'] = [text]
                     ep.append(example)
                     example = {'episode_done': False}
+                # add movements to text history if not training on them
+                if not self.opt['train_actions'] and is_action(text):
+                    example['text'] = example.get('text', '') + text + '\n'
             elif msg['id'] == 'Guide':
                 example['text'] = example.get('text', '') + text + '\n'
 
-            self.sim.execute(example, text)
+            self.sim.execute(text)
+            self.sim.add_view_to_text(example, text)
 
         if len(ep):
             ep[-1]['episode_done'] = True
@@ -443,17 +447,18 @@ class GuideTeacher(TTWTeacher):
         example = {'episode_done': False,
                 'target_location':self.sim.target_location,
                 'landmarks':self.sim.landmarks, 'text':
-                self.sim.get_textual_map()}
+                self.sim.get_text_map()}
         for msg in episode['dialog']:
             text = msg['text']
-            if msg['id'] == 'Guide' and not text.startswith('EVALUATE'):
-                example['labels'] = [text]
-                ep.append(example)
-                example = {'episode_done': False}
-            elif msg['id'] == 'Tourist' and not text.startswith('ACTION'):
+            if msg['id'] == 'Guide':
+                if self.opt['train_actions'] or not text.startswith('EVALUATE'):
+                    example['labels'] = [text]
+                    ep.append(example)
+                    example = {'episode_done': False}
+            elif msg['id'] == 'Tourist' and not is_action(text):
                 example['text'] = example.get('text', '') + text + '\n'
 
-            self.sim.execute(example, text, is_guide=True)
+            self.sim.execute(text)
 
         if len(ep):
             ep[-1]['episode_done'] = True

@@ -6,6 +6,8 @@ import json
 import numpy as np
 import os
 import copy
+from .build import build
+from random import choice, randint
 
 BOUNDARIES = {
     'hellskitchen': [3, 3],
@@ -14,6 +16,16 @@ BOUNDARIES = {
     'fidi':         [2, 3],
     'eastvillage':  [3, 4],
 }
+
+def is_action(msg, forward=False):
+    if forward:
+        return msg and msg == 'ACTION:FORWARD'
+    return msg and msg.startswith('ACTION:')
+
+def _path(opt):
+    build(opt)
+    dt = opt['datatype'].split(':')[0]
+    opt['ttw_data'] = os.path.join(opt['datapath'], 'TalkTheWalk')
 
 
 class Simulator():
@@ -26,61 +38,68 @@ class Simulator():
 
 
     def __init__(self, opt):
+        _path(opt)
         self.map = Map(opt['ttw_data'])
         self.act_dict = ActionAgnosticDictionary()
         self.feature_loader = GoldstandardFeatures(self.map)
 
-    def init_sim(self, neighborhood, boundaries, start_location,
-            target_location):
-        self.boundaries = boundaries
-        self.neighborhood = neighborhood
-        self.agent_location = start_location
-        self.landmarks, self.target_location = self.map.get_landmarks(
-                neighborhood,
-                boundaries,
-                target_location)
+    def _get_random_location(self):
+        return [randint(self.boundaries[0], self.boundaries[2]),
+             randint(self.boundaries[1], self.boundaries[3]),
+             randint(0, 3)]
 
-    def get_textual_map(self):
+    def random_init(self):
+        self.neighborhood = choice(list(BOUNDARIES.keys()))
+        self.boundaries = [randint(0, BOUNDARIES[self.neighborhood][x])*2 for x in range(2)]
+        self.boundaries = self.boundaries + [x + 3 for x in self.boundaries]
+        self.agent_location = self._get_random_location()
+        self.target_location = self._get_random_location()
+
+    def init_sim(self, neighborhood=None, boundaries=None, start_location=None,
+            target_location=None):
+
+        if not neighborhood:
+            self.random_init()
+        else:
+            self.boundaries = boundaries
+            self.neighborhood = neighborhood
+            self.agent_location = start_location
+            self.target_location = target_location
+
+        self.landmarks, self.target_location = self.map.get_landmarks(
+                self.neighborhood,
+                self.boundaries,
+                self.target_location)
+
+    def get_text_map(self):
         L = [y for x in zip(*self.landmarks) for y in x]
 
         txt = '\n'.join([(str(i) + ':' + ' and '.join(x)) for i,x in enumerate(L)])
         txt+= '\n' + str(self.target_location[0] + 4*self.target_location[1])+':Target'+'\n'
         return txt
 
-    def _encode_moves_to_text(self, act, move, see):
-        if move:
-            act['move'] = act.get('move', [])
-            act['see'] = act.get('see', [])
-            act['move'].append(move)
-            act['see'].append(see)
-            act['text'] = act.get('text', '') + "\n".join(['move:'+x for x in move]) + '\n'
-            act['text'] = act.get('text', '') + "\n".join(['see:'+x for x in see]) + '\n'
-        return act
+    def get_current_view(self):
+        return "\n".join(['see:'+x for x in self.feature_loader.get(self.neighborhood, self.agent_location)])
 
+    def add_view_to_text(self, obs, action=None):
+        action = action or obs.get('text')
+        if action and is_action(action, forward=True):
+            see = self.get_current_view()
+            obs['text'] = obs.get('text', '') + "\n".join(['see:'+x for x in see]) + '\n'
 
-    def execute(self, act, msg, is_guide=False):
-        """move tourist and encode observations into action"""
-        if not msg.startswith('ACTION'):
-            return [], []
+    def execute_and_write(self, obs, action):
+        self.execute(action)
+        self.add_view_to_text(obs, action)
 
-        location = self.map.step_aware(
-                msg,
+    def execute(self, text):
+        """move the tourist"""
+        if not is_action(text):
+            return
+
+        self.agent_location = self.map.step_aware(
+                text,
                 self.agent_location,
                 self.boundaries)
-
-        see = None
-        move = None
-        if msg == 'ACTION:FORWARD':
-            move = [self.act_dict.move_from_location(self.agent_location,
-                location)]
-            see = self.feature_loader.get(
-                    self.neighborhood,
-                    self.agent_location)
-            if not is_guide:
-                self._encode_moves_to_text(act, move, see)
-        self.agent_location = location
-        return act
-
 
 
 class SimulateWorld(ExecutableWorld):
@@ -99,50 +118,54 @@ class SimulateWorld(ExecutableWorld):
             self.guide = agents[1]
 
         if shared:
-            self.map = shared['map']
-            self.feature_loader = shared['feature_loader']
+            self.sim = shared['sim']
+        else:
+            self.sim = Simulator(opt)
+            self.sim.init_sim()
 
+        self.send_map(self.guide)
+        self.send_location(self.tourist)
+
+    def send_map(self, agent):
+        agent.observe({'text': self.sim.get_text_map()})
+
+    def send_location(self, agent):
+        agent.observe({'text': self.sim.get_current_view()})
 
     def share(self):
-        shared_data = super().share()
-        shared_data['map'] = self.map
-        shared_data['feature_loader'] = self.feature_loader
-        return shared_data
+        shared = super().share()
+        shared['sim'] = self.sim
+        return shared
+
+    def execute(self, act):
+        self.sim.execute(act['text'])
+
+    def episode_done(self):
+        return self.guide_act.startswith('EVALUATE')
 
     def parley(self):
         acts = self.acts
+        act = self.tourist.act()
+        while is_action(act['text']):
+            self.execute(self.tourist, act)
+            obs = self.observe(self.tourist, act)
+            if obs is not None:
+                tourist.observe(obs)
+            act = tourist.act()
+        self.guide.observe(act)
+        self.guide_act = self.guide.act()
+        obs = self.observe(self.guide, act)
 
-        #allow tourist to move indefinately and then speak
-        while True:
-            acts[0] = self.tourist.act()
-            print("acts[0]", acts[0]);
-            acts[0] = self.tourist.observe(self.observe(self.tourist, acts[0]))
-            if not acts[0].get('text', '').startswith('ACTION'):
-                break
-
-        self.guide.observe(self.observe(self.guide, acts[0]))
-        acts[1] = self.guide.act()
-        self.tourist.observe(self.observe(self.tourist, acts[1]))
+        if obs is not None:
+            self.tourist.observe(obs)
         self.update_counters()
 
     def observe(self, agent, act):
-        act = defaultdict(list, copy.copy(act))
-        text = act.get('text')
-
-        if text and text.startswith('ACTION'):
-            location, saw = self.sim.act(text)
-            act['see'] = saw
-            act['text']+='\n'+" ".join(act['see'])
-
-            #tourist agent only uses location to calculate deltas
-            act['location'] = location
-
-        # if agent.id == 'guide':
-        #     act['landmarks'], act['target_location'] = \
-        #         self.map.get_landmarks(self.neighborhood, self.boundaries,
-        #                 self.target_location)
-
+        self.sim.add_view_to_text(act)
         return act
+
+
+
 
 class Map(object):
     """Map with landmarks"""
