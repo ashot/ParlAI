@@ -19,8 +19,8 @@ BOUNDARIES = {
 
 def is_action(msg, forward=False):
     if forward:
-        return msg and msg == 'ACTION:FORWARD'
-    return msg and msg.startswith('ACTION:')
+        return msg and (msg == 'ACTION:FORWARD' or msg == 'ACTION : FORWARD')
+    return msg and msg.startswith('ACTION')
 
 def _path(opt):
     build(opt)
@@ -84,8 +84,7 @@ class Simulator():
     def add_view_to_text(self, obs, action=None):
         action = action or obs.get('text')
         if action and is_action(action, forward=True):
-            see = self.get_current_view()
-            obs['text'] = obs.get('text', '') + "\n".join(['see:'+x for x in see]) + '\n'
+            obs['text'] = obs.get('text', '') + self.get_current_view() + '\n'
 
     def execute_and_write(self, obs, action):
         self.execute(action)
@@ -108,6 +107,8 @@ class SimulateWorld(ExecutableWorld):
     neighborhood = None
     agent_location = None
     target_location = None
+    guide = None
+    tourist = None
 
 
     def __init__(self, opt, agents=None, shared=None):
@@ -123,8 +124,9 @@ class SimulateWorld(ExecutableWorld):
             self.sim = Simulator(opt)
             self.sim.init_sim()
 
-        self.send_map(self.guide)
-        self.send_location(self.tourist)
+        if agents:
+            self.send_map(self.guide)
+            self.send_location(self.tourist)
 
     def send_map(self, agent):
         agent.observe({'text': self.sim.get_text_map()})
@@ -137,7 +139,7 @@ class SimulateWorld(ExecutableWorld):
         shared['sim'] = self.sim
         return shared
 
-    def execute(self, act):
+    def execute(self, agent, act):
         self.sim.execute(act['text'])
 
     def episode_done(self):
@@ -150,8 +152,8 @@ class SimulateWorld(ExecutableWorld):
             self.execute(self.tourist, act)
             obs = self.observe(self.tourist, act)
             if obs is not None:
-                tourist.observe(obs)
-            act = tourist.act()
+                self.tourist.observe(obs)
+            act = self.tourist.act()
         self.guide.observe(act)
         self.guide_act = self.guide.act()
         obs = self.observe(self.guide, act)
@@ -163,8 +165,6 @@ class SimulateWorld(ExecutableWorld):
     def observe(self, agent, act):
         self.sim.add_view_to_text(act)
         return act
-
-
 
 
 class Map(object):

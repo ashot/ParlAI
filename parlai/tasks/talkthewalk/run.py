@@ -21,7 +21,7 @@ Examples
 from parlai.core.params import ParlaiParser
 from parlai.core.agents import create_agent
 from parlai.core.logs import TensorboardLogger
-from parlai.core.worlds import create_task
+from parlai.core.worlds import create_task, BatchWorld
 from parlai.core.utils import TimeLogger
 from parlai.tasks.talkthewalk.agents import TouristAgent, GuideAgent
 from parlai.tasks.talkthewalk.worlds import SimulateWorld
@@ -37,7 +37,6 @@ def setup_args(parser=None):
     parser.add_argument('-tmf', '--tourist-model-file', type=str)
     parser.add_argument('-gmf', '--guide-model-file', type=str)
     parser.add_argument('-ne', '--num-examples', type=int, default=-1)
-    parser.add_argument('-d', '--display-examples', type='bool', default=False)
     parser.add_argument('-ltim', '--log-every-n-secs', type=float, default=2)
     parser.add_argument('--metrics', type=str, default="all",
                         help="list of metrics to show/compute, e.g. "
