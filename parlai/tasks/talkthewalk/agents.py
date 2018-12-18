@@ -8,6 +8,7 @@
 from parlai.core.teachers import FbDialogTeacher
 from parlai.core.teachers import FixedDialogTeacher
 from .build import build
+from .worlds import Simulator
 
 import copy
 import json
@@ -359,6 +360,12 @@ class TouristAgent(TTWAgent):
 
 class TTWTeacher(FixedDialogTeacher):
 
+    @staticmethod
+    def add_cmdline_args(argparser):
+        agent = argparser.add_argument_group('Talk The Walk Teacher Arguments')
+        agent.add_argument('--train-actions', type=bool, default=False, help='Train model to take actions')
+
+
     def __init__(self, opt, shared=None):
         super().__init__(opt, shared)
         self.opt = opt
@@ -366,9 +373,11 @@ class TTWTeacher(FixedDialogTeacher):
         self.training = self.datatype.startswith('train')
         self.num_epochs = self.opt.get('num_epochs', 0)
         data_path, datafile = _path(opt)
+        self.sim = Simulator(opt)
 
         if shared:
             self.data = shared['data']
+            self.sim = shared['sim']
         else:
             self._setup_data(datafile)
         self.reset()
@@ -380,7 +389,14 @@ class TTWTeacher(FixedDialogTeacher):
         self.examples_count = 0
 
         for episode in self.episodes:
-            self._setup_episode(episode)
+            init = {x:y for x,y in episode.items() if x in ['start_location',
+                'neighborhood', 'boundaries', 'target_location']}
+            self.sim.init_sim(**init)
+            if episode:
+                episode = self._setup_episode(episode)
+                if episode:
+                    self.data.append(episode)
+                    self.examples_count += len(episode)
 
 
     def get(self, episode_idx, entry_idx=0):
@@ -389,6 +405,7 @@ class TTWTeacher(FixedDialogTeacher):
     def share(self):
         shared = super().share()
         shared['data'] = self.data
+        shared['sim'] = self.sim
         return shared
 
     def num_episodes(self):
@@ -397,48 +414,51 @@ class TTWTeacher(FixedDialogTeacher):
     def num_examples(self):
         return self.examples_count
 
-class GuideTeacher(TTWTeacher):
-    def _setup_episode(self, episode):
-        example = {x:y for x,y in episode.items() if x in ['start_location',
-            'neighborhood', 'boundaries', 'target_location', 'landmarks']}
-
-        dialog = episode['dialog']
-        if dialog:
-            self.data.append([])
-            for i,msg in enumerate(dialog):
-                if msg['id'] == 'Guide':
-                    example['labels'] = [msg['text']]
-                    self.examples_count += 1
-                    self.data[-1].append(example)
-                    example = {}
-                elif not msg['text'].startswith('ACTION'):
-                    example['text'] = example.get('text', '') + msg['text'] + '\n'
-            if self.data[-1]:
-                self.data[-1][-1]['episode_done'] = True
-            else:
-                self.data.pop()
-
 
 class TouristTeacher(TTWTeacher):
     def _setup_episode(self, episode):
-        example = {x:y for x,y in episode.items() if x in ['start_location',
-            'neighborhood', 'boundaries', 'target_location', 'landmarks']}
+        ep = []
+        example = {'episode_done': False}
+        for msg in episode['dialog']:
+            text = msg['text']
+            if msg['id'] == 'Tourist':
+                if self.opt['train_actions'] or not text.startswith('ACTION'):
+                    example['labels'] = [text]
+                    ep.append(example)
+                    example = {'episode_done': False}
+            elif msg['id'] == 'Guide':
+                example['text'] = example.get('text', '') + text + '\n'
 
-        dialog = episode['dialog']
-        if dialog:
-            self.data.append([])
-            for i,msg in enumerate(dialog):
-                if msg['id'] == 'Tourist':
-                    example['labels'] = [msg['text']]
-                    self.examples_count += 1
-                    self.data[-1].append(example)
-                    example = {}
-                else:
-                    example['text'] = example.get('text', '') + msg['text'] + '\n'
-            if self.data[-1]:
-                self.data[-1][-1]['episode_done'] = True
-            else:
-                self.data.pop()
+            self.sim.execute(example, text)
+
+        if len(ep):
+            ep[-1]['episode_done'] = True
+        return ep
+
+
+
+class GuideTeacher(TTWTeacher):
+    def _setup_episode(self, episode):
+        ep = []
+        example = {'episode_done': False,
+                'target_location':self.sim.target_location,
+                'landmarks':self.sim.landmarks, 'text':
+                self.sim.get_textual_map()}
+        for msg in episode['dialog']:
+            text = msg['text']
+            if msg['id'] == 'Guide' and not text.startswith('EVALUATE'):
+                example['labels'] = [text]
+                ep.append(example)
+                example = {'episode_done': False}
+            elif msg['id'] == 'Tourist' and not text.startswith('ACTION'):
+                example['text'] = example.get('text', '') + text + '\n'
+
+            self.sim.execute(example, text, is_guide=True)
+
+        if len(ep):
+            ep[-1]['episode_done'] = True
+        return ep
+
 
 
 class DefaultTeacher(TouristTeacher):
