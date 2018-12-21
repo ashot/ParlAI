@@ -7,7 +7,7 @@
 
 from parlai.core.teachers import FbDialogTeacher
 from parlai.core.teachers import FixedDialogTeacher
-from .build import build
+from parlai.tasks.talkthewalk.build import build
 
 import copy
 import json
@@ -122,7 +122,7 @@ class GuideAgent(TTWAgent):
         out = self.model.forward(batch)
 
         #TODO: move the loss function out of the model
-        out['sl_loss'].backward()
+        out['sl_loss'].sum().backward()
         self.update_params()
 
     def batchify(self, obs_batch, **kwargs):
@@ -158,10 +158,11 @@ class GuideAgent(TTWAgent):
         return obs
 
     def _vectorize_landmarks(self, landmarks):
+        landmark_vec = copy.deepcopy(landmarks)
         for i, row in enumerate(landmarks):
             for j, col in enumerate(row):
-                landmarks[i][j] = [self.landmark_dict.encode(x) for x in col]
-        return landmarks
+                landmark_vec[i][j] = [self.landmark_dict.encode(x) for x in col]
+        return landmark_vec
 
 class TouristAgent(TTWAgent):
 
@@ -328,27 +329,6 @@ class TouristAgent(TTWAgent):
         predictions = {'text':out['text'] for x in out}
         return Output(self.v2t(predictions))
 
-class GuideLocalizeTeacher(TTWBase):
-    def _setup_episode(self, episode):
-        ep = []
-        example = {'episode_done': False, 'text': self.sim.get_text_map(),
-                'landmarks':self.sim.get_landmarks()}
-        for msg in episode['dialog']:
-            text = msg['text']
-            if msg['id'] == 'Guide':
-                example['text'] = example.get('text', '') + text + '\n'
-            elif msg['id'] == 'Tourist' and not is_action(text):
-                example['text'] = example.get('text', '') + text + '\n'
-                example['labels'] = [self.sim.get_agent_location()]
-                ep.append(example)
-                example = {'episode_done': False}
-
-            self.sim.execute(text)
-
-        if len(ep):
-            ep[-1]['episode_done'] = True
-        return ep
-
 class GuideLocalizationTeacher(FixedDialogTeacher):
 
     def __init__(self, opt, shared=None):
@@ -396,56 +376,3 @@ class GuideLocalizationTeacher(FixedDialogTeacher):
 
     def num_examples(self):
         return self.examples_count
-
-class DefaultTeacher(GuideLocalizationTeacher):
-    pass
-
-class TouristTeacher(TTWBase):
-    def _setup_episode(self, episode):
-        ep = []
-        example = {'episode_done': False}
-        for msg in episode['dialog']:
-            text = msg['text']
-            if msg['id'] == 'Tourist':
-                if self.opt.get('train_actions') or not is_action(text):
-                    example['labels'] = [text]
-                    ep.append(example)
-                    example = {'episode_done': False}
-                # add movements to text history if not training on them
-                if not self.opt.get('train_actions') and is_action(text):
-                    example['text'] = example.get('text', '') + text + '\n'
-            elif msg['id'] == 'Guide':
-                example['text'] = example.get('text', '') + text + '\n'
-
-            self.sim.execute(text)
-            self.sim.add_view_to_text(example, text)
-
-        if len(ep):
-            ep[-1]['episode_done'] = True
-        return ep
-
-
-class GuideTeacher(TTWBase):
-    def _setup_episode(self, episode):
-        ep = []
-        example = {'episode_done': False, 'text': self.sim.get_text_map()}
-        for msg in episode['dialog']:
-            text = msg['text']
-            if msg['id'] == 'Guide':
-                if self.opt.get('train_actions') or not text.startswith('EVALUATE'):
-                    example['labels'] = [text]
-                    ep.append(example)
-                    example = {'episode_done': False}
-            elif msg['id'] == 'Tourist' and not is_action(text):
-                example['text'] = example.get('text', '') + text + '\n'
-
-            self.sim.execute(text)
-
-        if len(ep):
-            ep[-1]['episode_done'] = True
-        return ep
-
-
-
-class DefaultTeacher(TouristTeacher):
-    pass

@@ -165,52 +165,6 @@ class SimulateWorld(ExecutableWorld):
         self.sim.add_view_to_text(act)
         return act
 
-    # def observe(self, agent, act):
-# <<<<<<< HEAD:parlai/tasks/talkthewalk/worlds.py
-    #     self.sim.add_view_to_text(act)
-    #     return act
-
-# =======
-    #     act = copy.copy(act)
-    #     self.boundaries = act.get('boundaries') or self.boundaries
-    #     self.neighborhood = act.get('neighborhood') or self.neighborhood
-    #     self.agent_location = act.get('start_location') or \
-    #         self.agent_location
-    #     self.target_location = copy.copy(act.get('target_location')) or \
-    #         self.target_location
-    #     act.pop('start_location', None)
-    #     act.pop('target_location', None)
-
-    #     text = act.get('text')
-
-    #     #update agent location based on movements and generate observations
-    #     if text and text.startswith('ACTION'):
-    #         act.pop('text', None)
-    #         self.agent_location = self.map.step_aware(
-    #                 text,
-    #                 self.agent_location,
-    #                 self.boundaries)
-
-    #         if agent.id == 'tourist':
-    #             if text == ('ACTION:FORWARD'):
-    #                 act['see'] = self.feature_loader.get(
-    #                         self.neighborhood,
-    #                         self.agent_location)
-
-    #             #tourist agent only uses location to calculate deltas
-    #             act['location'] = self.agent_location
-
-    #     if agent.id == 'guide':
-    #         act['landmarks'], act['target_location'] = \
-    #             self.map.get_landmarks(self.neighborhood, self.boundaries,
-    #                     self.target_location)
-    #         act['labels'] = act['location']
-
-    #     #filter out some examples for now
-    #     if [x for x in act if x in ['see', 'text', 'labels']]:
-    #         return act
-    #     else:
-    #         return {'episode_done': False}
 
 class Map(object):
     """Map with landmarks"""

@@ -109,7 +109,6 @@ class LandmarkDictionary(object):
         self.landmark2i = {value: index for index, value in enumerate(self.i2landmark)}
 
     def encode(self, name):
-        import ipdb; ipdb.set_trace() #>>>DROP INTO IPDB<<
         return self.landmark2i[name] + 1
 
     def decode(self, i):
